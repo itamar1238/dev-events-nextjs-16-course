@@ -108,29 +108,38 @@ const EventSchema = new Schema<IEvent>(
  * Pre-save hook to generate slug from title, normalize date to ISO format,
  * and ensure time is in consistent format (HH:MM)
  */
-EventSchema.pre("save", function (next) {
+EventSchema.pre("save", async function (next) {
   // Generate slug only if title is modified or document is new
   if (this.isModified("title")) {
-    this.slug = this.title
+    const baseSlug = this.title
       .toLowerCase()
       .trim()
       .replace(/[^\w\s-]/g, "") // Remove special characters
       .replace(/\s+/g, "-") // Replace spaces with hyphens
       .replace(/-+/g, "-") // Replace multiple hyphens with single hyphen
       .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
+
+    // Check for slug collisions and append counter if needed
+    let slug = baseSlug;
+    let counter = 1;
+    const EventModel = mongoose.models.Event as Model<IEvent>;
+
+    while (await EventModel.exists({ slug, _id: { $ne: this._id } })) {
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+
+    this.slug = slug;
   }
 
-  // Normalize date to ISO format (YYYY-MM-DD) if modified
+  // Validate and normalize date to ISO format (YYYY-MM-DD) if modified
   if (this.isModified("date")) {
-    try {
-      const parsedDate = new Date(this.date);
-      if (isNaN(parsedDate.getTime())) {
-        return next(new Error("Invalid date format"));
-      }
-      this.date = parsedDate.toISOString().split("T")[0];
-    } catch (error) {
-      return next(new Error("Invalid date format"));
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!isoDateRegex.test(this.date)) {
+      return next(new Error("Date must be in YYYY-MM-DD format"));
     }
+    // Date is already in correct format, ensure it's stored consistently
+    this.date = this.date.trim();
   }
 
   // Normalize time to HH:MM format if modified
